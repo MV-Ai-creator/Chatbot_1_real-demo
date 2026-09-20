@@ -93,10 +93,14 @@ def chat():
 
         # Initialize chat session if needed
         if session_id not in sessions:
+            # Dynamically calculate the current real-world date and time
+            current_date_str = datetime.now().strftime('%A, %B %d, %Y (%I:%M %p)')
+
             sessions[session_id] = client.chats.create(
                 model="gemini-3.1-flash-lite",
                 config=types.GenerateContentConfig(
                     system_instruction=f"You are a professional AI receptionist for {BUSINESS_NAME}.\n\n"
+                                       f"CRITICAL CONTEXT: Today's date and time is {current_date_str}.\n\n"
                                        f"Knowledge Base:\n{BUSINESS_KNOWLEDGE}\n\n"
                                        f"When a user wants to book an appointment:\n"
                                        f"1. Ask for their desired date and time, name, phone number, and address.\n"
