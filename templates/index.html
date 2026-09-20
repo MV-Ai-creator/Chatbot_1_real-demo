@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Receptionist Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 40px;
+        }
+
+        /* Floating Teaser Popup Badge */
+        #chat-teaser {
+            position: fixed;
+            bottom: 22px;
+            right: 80px;
+            background-color: #ffffff;
+            color: #1f2937;
+            padding: 10px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+            border: 1px solid #e5e7eb;
+            z-index: 10000;
+            cursor: pointer;
+            white-space: nowrap;
+            animation: float-pulse 3s infinite ease-in-out;
+        }
+
+        /* Arrow pointing from badge to toggle button */
+        #chat-teaser::after {
+            content: '';
+            position: absolute;
+            right: -8px;
+            top: 50%;
+            transform: translateY(-50%);
+            border-width: 6px 0 6px 8px;
+            border-style: solid;
+            border-color: transparent transparent transparent #ffffff;
+        }
+
+        @keyframes float-pulse {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-4px); }
+        }
+
+        /* Floating Chat Button */
+        #chat-toggle {
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 55px;
+            height: 55px;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            z-index: 10000;
+        }
+
+        /* Chat Widget Container */
+        #chat-container {
+            display: flex;
+            flex-direction: column;
+            position: fixed;
+            bottom: 80px;
+            right: 15px;
+            width: 320px;
+            max-width: calc(100vw - 30px);
+            height: 420px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+            overflow: hidden;
+            z-index: 9999;
+        }
+
+        /* Header */
+        .chat-header {
+            background-color: #007bff;
+            color: white;
+            padding: 12px 16px;
+            font-weight: bold;
+            font-size: 15px;
+        }
+
+        /* Message Box */
+        #chat-box {
+            flex: 1;
+            padding: 12px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 8px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+
+        .user-message {
+            align-self: flex-end;
+            background-color: #007bff;
+            color: white;
+        }
+
+        .bot-message {
+            align-self: flex-start;
+            background-color: #e9ecef;
+            color: #333;
+        }
+
+        /* Typing Indicator Styles */
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 10px 14px;
+            width: fit-content;
+        }
+
+        .typing-indicator span {
+            width: 7px;
+            height: 7px;
+            background-color: #6c757d;
+            border-radius: 50%;
+            display: inline-block;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+
+        .typing-indicator span:nth-child(1) {
+            animation-delay: -0.32s;
+        }
+
+        .typing-indicator span:nth-child(2) {
+            animation-delay: -0.16s;
+        }
+
+        @keyframes bounce {
+            0%, 80%, 100% {
+                transform: scale(0);
+            }
+            40% {
+                transform: scale(1);
+            }
+        }
+
+        /* Input Area */
+        .chat-input-container {
+            display: flex;
+            border-top: 1px solid #ddd;
+            padding: 8px;
+            background: #fff;
+        }
+
+        #user-input {
+            flex: 1;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            padding: 8px;
+            outline: none;
+        }
+
+        #send-btn {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            margin-left: 6px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Your Live Website Mockup</h1>
+    <p>Test your floating live-chat receptionist in the bottom-right corner.</p>
+
+    <!-- Teaser Badge -->
+    <div id="chat-teaser" onclick="toggleChat()">
+        👋 I'm a chatbot! Talk to me &amp; book an appointment!
+    </div>
+
+    <!-- Floating Chat Button -->
+    <button id="chat-toggle" onclick="toggleChat()">💬</button>
+
+    <div id="chat-container">
+        <div class="chat-header">Apex Plumbing Receptionist</div>
+        <div id="chat-box">
+            <div class="message bot-message">Hello! Welcome to Apex Plumbing Co. How can I help you today?</div>
+        </div>
+        <div class="chat-input-container">
+            <input type="text" id="user-input" placeholder="Type a message..." onkeypress="handleKeyPress(event)">
+            <button id="send-btn" onclick="sendMessage()">Send</button>
+        </div>
+    </div>
+
+    <script>
+        function toggleChat() {
+            const container = document.getElementById('chat-container');
+            const teaser = document.getElementById('chat-teaser');
+
+            const isHidden = container.style.display === 'none' || container.style.display === '';
+            
+            if (isHidden) {
+                container.style.display = 'flex';
+                // Hide teaser badge when chat window opens
+                if (teaser) teaser.style.display = 'none';
+            } else {
+                container.style.display = 'none';
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === 'Enter') {
+                sendMessage();
+            }
+        }
+
+        async function sendMessage() {
+            const inputField = document.getElementById('user-input');
+            const chatBox = document.getElementById('chat-box');
+            const text = inputField.value.trim();
+
+            if (!text) return;
+
+            // Display user message
+            const userDiv = document.createElement('div');
+            userDiv.className = 'message user-message';
+            userDiv.innerText = text;
+            chatBox.appendChild(userDiv);
+
+            inputField.value = '';
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            // Display thinking indicator bubble
+            const loadingDiv = document.createElement('div');
+            loadingDiv.className = 'message bot-message typing-indicator';
+            loadingDiv.innerHTML = '<span></span><span></span><span></span>';
+            chatBox.appendChild(loadingDiv);
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text, session_id: 'test_session' })
+                });
+
+                const data = await response.json();
+
+                // Remove thinking bubble
+                chatBox.removeChild(loadingDiv);
+
+                const botDiv = document.createElement('div');
+                botDiv.className = 'message bot-message';
+                botDiv.innerText = data.response || data.error || "No response received.";
+                chatBox.appendChild(botDiv);
+            } catch (err) {
+                // Remove thinking bubble on error
+                chatBox.removeChild(loadingDiv);
+
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'message bot-message';
+                errorDiv.style.color = 'red';
+                errorDiv.innerText = "Error connecting to backend server.";
+                chatBox.appendChild(errorDiv);
+            }
+
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>
