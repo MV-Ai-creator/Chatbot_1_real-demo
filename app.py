@@ -1,5 +1,6 @@
 import os
 import csv
+import re
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
@@ -38,6 +39,21 @@ Frequently Asked Questions:
 - Are you insured? Yes, fully licensed, bonded, and insured.
 """
 
+# PHONE FORMATTER: TAKES ANY STRING AND TURNS IT INTO XXX-XXX-XXXX
+def clean_and_format_phone(raw_phone: str) -> str:
+    # Extract only digits from whatever input string the user/bot provides
+    digits = re.sub(r'\D', '', str(raw_phone))
+    
+    # Strip country code '1' if the user included it (e.g., +1 5658490392 -> 5658490392)
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits[1:]
+        
+    # Format into XXX-XXX-XXXX if standard 10-digit number
+    if len(digits) == 10:
+        return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
+        
+    return str(raw_phone).strip()
+
 # 3. APPOINTMENT FUNCTIONS FOR GEMINI TOOLS
 def check_slot_availability(date_time: str) -> dict:
     """
@@ -62,16 +78,24 @@ def book_appointment(date_time: str, customer_name: str, phone: str, address: st
     """
     Books an appointment after verifying availability.
     """
-    # Double-check availability prior to saving
+    # 1. HARD OVERWRITE: Standardize the phone number in Python regardless of what was passed
+    formatted_phone = clean_and_format_phone(phone)
+
+    # 2. Check availability
     availability = check_slot_availability(date_time)
     if not availability["available"]:
         return {"success": False, "message": "Slot was taken right before booking! Pick another time."}
 
+    # 3. Save formatted phone number to CSV database
     with open(APPOINTMENTS_FILE, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow([date_time.strip(), customer_name, phone, address])
+        writer.writerow([date_time.strip(), customer_name.strip(), formatted_phone, address.strip()])
 
-    return {"success": True, "message": f"Successfully booked for {customer_name} at {date_time}."}
+    # 4. Return formatted number explicitly in the tool confirmation message back to Gemini
+    return {
+        "success": True, 
+        "message": f"Successfully booked for {customer_name} at {date_time}. Saved Phone: {formatted_phone}."
+    }
 
 # List of tool functions provided to Gemini
 bot_tools = [check_slot_availability, book_appointment]
@@ -91,22 +115,25 @@ def chat():
         user_message = data.get('message', '')
         session_id = data.get('session_id', 'client_1')
 
+        # Get current date and time dynamically
+        current_time_str = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+
         # Initialize chat session if needed
         if session_id not in sessions:
-            # Dynamically calculate the current real-world date and time
-            current_date_str = datetime.now().strftime('%A, %B %d, %Y (%I:%M %p)')
-
             sessions[session_id] = client.chats.create(
                 model="gemini-3.1-flash-lite",
                 config=types.GenerateContentConfig(
-                    system_instruction=f"You are a professional AI receptionist for {BUSINESS_NAME}.\n\n"
-                                       f"CRITICAL CONTEXT: Today's date and time is {current_date_str}.\n\n"
-                                       f"Knowledge Base:\n{BUSINESS_KNOWLEDGE}\n\n"
-                                       f"When a user wants to book an appointment:\n"
-                                       f"1. Ask for their desired date and time, name, phone number, and address.\n"
-                                       f"2. Check slot availability using `check_slot_availability` BEFORE confirming.\n"
-                                       f"3. If available, call `book_appointment` to lock in the reservation.\n"
-                                       f"4. If already booked, politely let them know and offer alternative times.",
+                    system_instruction=(
+                        f"You are a professional AI receptionist for {BUSINESS_NAME}.\n\n"
+                        f"CURRENT REAL-TIME DATE AND TIME: {current_time_str}.\n"
+                        f"Always use this current date and time as your baseline when discussing scheduling, relative days (like 'tomorrow', 'this Friday', etc.), or appointments.\n\n"
+                        f"Knowledge Base:\n{BUSINESS_KNOWLEDGE}\n\n"
+                        f"When a user wants to book an appointment:\n"
+                        f"1. Ask for their desired date and time, full name, phone number, and address.\n"
+                        f"2. Check slot availability using `check_slot_availability` BEFORE confirming.\n"
+                        f"3. Call `book_appointment` to lock in the reservation.\n"
+                        f"4. If already booked, politely let them know and offer alternative times."
+                    ),
                     tools=bot_tools
                 )
             )
