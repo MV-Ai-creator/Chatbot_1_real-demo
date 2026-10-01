@@ -1,7 +1,9 @@
 import os
 import csv
 import re
+import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
@@ -28,12 +30,15 @@ def init_appointments_db():
 
 init_appointments_db()
 
-# 2. BUSINESS KNOWLEDGE
+# 2. BUSINESS KNOWLEDGE & CONFIG
 BUSINESS_NAME = "Apex Plumbing Co."
-BUSINESS_KNOWLEDGE = """
+BUSINESS_PHONE = "(555) 123-4567"
+
+BUSINESS_KNOWLEDGE = f"""
 Operating Hours: Mon-Fri 8 AM - 6 PM. (24/7 Emergency dispatch available).
 Services Offered: Drain cleaning, pipe leak repairs, water heater replacements.
 Pricing Policy: We charge an $89 diagnostic fee to send a truck out.
+Business Contact Phone: {BUSINESS_PHONE}
 Frequently Asked Questions:
 - Do you offer financing? Yes, for any job over $1,000.
 - Are you insured? Yes, fully licensed, bonded, and insured.
@@ -41,61 +46,66 @@ Frequently Asked Questions:
 
 # PHONE FORMATTER: TAKES ANY STRING AND TURNS IT INTO XXX-XXX-XXXX
 def clean_and_format_phone(raw_phone: str) -> str:
-    # Extract only digits from whatever input string the user/bot provides
     digits = re.sub(r'\D', '', str(raw_phone))
-    
-    # Strip country code '1' if the user included it (e.g., +1 5658490392 -> 5658490392)
     if len(digits) == 11 and digits.startswith('1'):
         digits = digits[1:]
-        
-    # Format into XXX-XXX-XXXX if standard 10-digit number
     if len(digits) == 10:
         return f"{digits[:3]}-{digits[3:6]}-{digits[6:]}"
-        
     return str(raw_phone).strip()
 
 # 3. APPOINTMENT FUNCTIONS FOR GEMINI TOOLS
 def check_slot_availability(date_time: str) -> dict:
     """
     Checks if a requested appointment date and time is already booked.
-    Format for date_time should be standard, e.g., 'YYYY-MM-DD HH:MM' or '2026-10-15 16:00'.
+    CRITICAL: date_time MUST be strictly formatted as 'YYYY-MM-DD HH:MM' (e.g., '2026-10-05 14:00').
     """
-    if not os.path.exists(APPOINTMENTS_FILE):
-        return {"available": True}
-        
-    with open(APPOINTMENTS_FILE, mode='r', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            if row["date_time"].strip().lower() == date_time.strip().lower():
-                return {
-                    "available": False,
-                    "message": f"The slot at {date_time} is already booked. Please ask the user to select another time."
-                }
-                
-    return {"available": True, "message": f"The slot at {date_time} is open."}
+    try:
+        if not os.path.exists(APPOINTMENTS_FILE):
+            return {"available": True, "message": f"The slot at {date_time} is open."}
+            
+        clean_target = date_time.strip().lower()
+        with open(APPOINTMENTS_FILE, mode='r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("date_time", "").strip().lower() == clean_target:
+                    return {
+                        "available": False,
+                        "message": f"The slot at {date_time} is already booked. Please ask the user to select another time."
+                    }
+                    
+        return {"available": True, "message": f"The slot at {date_time} is open."}
+    except Exception as e:
+        return {"available": False, "message": f"Error checking availability: {str(e)}. Please try again."}
 
 def book_appointment(date_time: str, customer_name: str, phone: str, address: str) -> dict:
     """
-    Books an appointment after verifying availability.
+    Books an appointment after verifying availability and saves it to appointments.csv.
+    CRITICAL: date_time MUST be strictly formatted as 'YYYY-MM-DD HH:MM' (e.g., '2026-10-05 14:00').
     """
-    # 1. HARD OVERWRITE: Standardize the phone number in Python regardless of what was passed
-    formatted_phone = clean_and_format_phone(phone)
+    try:
+        # 1. Standardize phone number
+        formatted_phone = clean_and_format_phone(phone)
 
-    # 2. Check availability
-    availability = check_slot_availability(date_time)
-    if not availability["available"]:
-        return {"success": False, "message": "Slot was taken right before booking! Pick another time."}
+        # 2. Check availability first
+        availability = check_slot_availability(date_time)
+        if not availability.get("available", True):
+            return {"success": False, "message": "Slot was taken right before booking! Pick another time."}
 
-    # 3. Save formatted phone number to CSV database
-    with open(APPOINTMENTS_FILE, mode='a', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f)
-        writer.writerow([date_time.strip(), customer_name.strip(), formatted_phone, address.strip()])
+        # 3. Save appointment directly to CSV database file
+        file_exists = os.path.exists(APPOINTMENTS_FILE)
+        with open(APPOINTMENTS_FILE, mode='a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["date_time", "customer_name", "phone", "address"])
+            writer.writerow([date_time.strip(), customer_name.strip(), formatted_phone, address.strip()])
 
-    # 4. Return formatted number explicitly in the tool confirmation message back to Gemini
-    return {
-        "success": True, 
-        "message": f"Successfully booked for {customer_name} at {date_time}. Saved Phone: {formatted_phone}."
-    }
+        # 4. Return success confirmation
+        return {
+            "success": True, 
+            "message": f"Successfully booked appointment for {customer_name} at {date_time}. Saved to database."
+        }
+    except Exception as e:
+        return {"success": False, "message": f"Database error while booking: {str(e)}"}
 
 # List of tool functions provided to Gemini
 bot_tools = [check_slot_availability, book_appointment]
@@ -115,8 +125,9 @@ def chat():
         user_message = data.get('message', '')
         session_id = data.get('session_id', 'client_1')
 
-        # Get current date and time dynamically
-        current_time_str = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p")
+        # FORCE ILLINOIS CENTRAL TIME ZONE
+        il_timezone = ZoneInfo("America/Chicago")
+        current_time_str = datetime.now(il_timezone).strftime("%A, %B %d, %Y at %I:%M %p")
 
         # Initialize chat session if needed
         if session_id not in sessions:
@@ -125,38 +136,61 @@ def chat():
                 config=types.GenerateContentConfig(
                     system_instruction=(
                         f"You are a professional AI receptionist for {BUSINESS_NAME}.\n\n"
-                        f"CURRENT REAL-TIME DATE AND TIME: {current_time_str}.\n"
-                        f"Always use this current date and time as your baseline when discussing scheduling, relative days (like 'tomorrow', 'this Friday', etc.), or appointments.\n\n"
                         f"Knowledge Base:\n{BUSINESS_KNOWLEDGE}\n\n"
+                        f"CRITICAL SCHEDULING INSTRUCTIONS:\n"
+                        f"- Always look at the current real-time timestamp provided in user prompts.\n"
+                        f"- When checking availability or booking, you MUST convert any relative date/time "
+                        f"(like 'tomorrow at 2pm' or 'Friday morning') into strict standard format: 'YYYY-MM-DD HH:MM' (24-hour time).\n"
+                        f"- Example: If today is Wednesday, Sep 30, 2026 and user wants tomorrow at 2 PM, format it as '2026-10-01 14:00'.\n\n"
                         f"When a user wants to book an appointment:\n"
-                        f"1. Ask for their desired date and time, full name, phone number, and address.\n"
-                        f"2. Check slot availability using `check_slot_availability` BEFORE confirming.\n"
-                        f"3. Call `book_appointment` to lock in the reservation.\n"
+                        f"1. Collect their desired date and time, full name, phone number, and address.\n"
+                        f"2. Call `check_slot_availability` with the exact 'YYYY-MM-DD HH:MM' string BEFORE confirming.\n"
+                        f"3. Call `book_appointment` with the exact 'YYYY-MM-DD HH:MM' string to lock in the reservation and save it to the database.\n"
                         f"4. If already booked, politely let them know and offer alternative times."
                     ),
                     tools=bot_tools
                 )
             )
 
-        # Get response from Gemini
+        # Send message with automatic retry logic for temporary 503 server overloads
         chat_session = sessions[session_id]
-        response = chat_session.send_message(user_message)
+        prompt_with_time = f"[Current Real-Time (Central Time): {current_time_str}] {user_message}"
+        
+        response = None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = chat_session.send_message(prompt_with_time)
+                break
+            except Exception as api_err:
+                if ("503" in str(api_err) or "unavailable" in str(api_err).lower()) and attempt < max_retries - 1:
+                    print(f"API high demand encountered. Retrying in 2 seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(2)
+                else:
+                    raise api_err
 
         # CREATE SEPARATE FOLDER FOR THIS SPECIFIC CLIENT
         client_folder = os.path.join("clients", session_id)
         os.makedirs(client_folder, exist_ok=True)
 
-        # SAVE MESSAGES TO A FILE INSIDE THAT CLIENT'S FOLDER
+        # SAVE MESSAGES TO A FILE INSIDE THAT CLIENT'S FOLDER (using Illinois time)
         client_file = os.path.join(client_folder, "chat_history.txt")
         with open(client_file, mode='a', encoding='utf-8') as f:
-            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] User: {user_message}\n")
-            f.write(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Bot: {response.text}\n\n")
+            f.write(f"[{datetime.now(il_timezone).strftime('%Y-%m-%d %H:%M:%S')}] User: {user_message}\n")
+            f.write(f"[{datetime.now(il_timezone).strftime('%Y-%m-%d %H:%M:%S')}] Bot: {response.text}\n\n")
 
         return jsonify({"response": response.text})
 
     except Exception as e:
         print(f"Server Error: {e}")
-        return jsonify({"error": str(e)}), 500
+        
+        # GRACEFUL FALLBACK: Send friendly message to user with business phone instead of crashing
+        fallback_response = (
+            f"I am so sorry, but I am experiencing a temporary connection hiccup right now. "
+            f"If you need immediate assistance or want to finish booking your appointment, "
+            f"please give us a call directly at {BUSINESS_PHONE}!"
+        )
+        return jsonify({"response": fallback_response})
 
 if __name__ == '__main__':
     app.run(port=5000, debug=True)
